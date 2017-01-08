@@ -3,7 +3,7 @@ import datetime
 import re
 import json
 from text2num import text2num, NumberException
-
+from computer_vision import getImageTags
 
 def translate(s):
     parameters = {
@@ -44,92 +44,99 @@ def send_watson_request(raw_string, try_num=1, max_retries=3):
 
     if formatted_response['language'] != 'english':
         translated_text = translate(raw_string)
-        get_watson_response(translated_text[0],try_num+1)
+        get_watson_response(translated_text,try_num+1)
     else:
         return response.json()
 
-
-def lambda_handler(event,context):
-  input = event 
-  answer = input["raw_response"]
-  
 def get_number(response):
     num_list = re.findall('\d+', response)
     if num_list:
         return ",".join(num_list)
-    
-    for token in response.split(' '):
-        try:
-          num_list = text2num(token)
-          print('text2num response: {}'.format(num_list))
-          return num_list
-        except NumberException:
-          print('number exception when converting text to num')
-    if not num_list:
-      try:
-        translated_response = translate(response)
-        for token in translated_response.split(' '):
-          try:
-            num_list = text2num(token)
-            print('text2num response: {}'.format(num_list))
-            return num_list
-          except NumberException:
-            print('number exception')
-        else:
-          raise Exception("couldn't parse number response after translation and text to num attempt")
-      except:
-        raise Exception("couldn't parse number response after translation and text to num attempt")
 
-  def get_sentiment(response):
+    def convert_string_to_num(response):
+        for token in response.split(' '):
+            try:
+              num_list = text2num(token)
+              return num_list
+            except NumberException:
+              print('number exception when converting text to num')
+    num_list = convert_string_to_num(response)
+    if not num_list:
+        translated_response = translate(response)
+        print(translated_response)
+        num_list = convert_string_to_num(translated_response)
+        raise Exception('error parsing number metric')
+  
+def get_sentiment(response):
     alchemy_result = send_watson_request(response) 
     try:
-      result_confidence = alchemy_result["docSentiment"]["score"]
+        result_sentiment = alchemy_result["docSentiment"]["score"]
     except KeyError:
-      result_confidence = 0
-    return [result_value,result_confidence]    
+        result_sentiment = 0
+    return [result_sentiment, None]    
 
-  def get_entities(response):
+def get_entities(response):
     alchemy_result = send_watson_request(response) 
     result_value = ",".join([keyword["text"] for keyword in alchemy_result["keywords"]])
     result_confidence = ",".join([keyword["relevance"] for keyword in alchemy_result["keywords"]])
     return [result_value, result_confidence]
 
-  def get_dates(response):
+def get_dates(response):
     alchemy_result = send_watson_request(response) 
     result_value = ",".join([date["date"] for date in alchemy_result["dates"]])
-    result_confidence = ",".join([keyword["relevance"] for keyword in alchemy_result["keywords"]])
-    return [result_value, result_confidence]
+    return [result_value, None]
 
+
+def get_binary(response):
+    # FROM THESAURUS.COM
+    yes_list = set(['yes','sure', 'affirmative','amen','fine','good','okay','true','yea','all right','aye','beyond a doubt','by all means','certainly','definitely','even so','exactly','gladly','good enough','granted','indubitably','just so','most assuredly','naturally','of course','positively','precisely','sure thing','surely','undoubtedly','unquestionably','very well','willingly','without fail','yep'])
+    no_list = set(['no','negative','absolutely not','nix','by no means','never','no way','not at all','not by any means'])
+    maybe_list = set(['maybe','perchance','perhaps','possibly','as it may be','can be','conceivably','could be','credible','feasible','imaginably','it could be','might be','obtainable','weather permitting'])
+
+    cleaned_response = ' '.join([token.lower() for token in response.split()])
     
-  def get_binary(response):
-    if "y" in response:
-      return "yes"
-    elif "n" in response:
-      return "no"
-    else:
-      raise NameError('Bad binary response')
+    def logic(cleaned_response):
+        if cleaned_response in yes_list:
+            return "YES"
+        elif cleaned_response in no_list:
+            return "NO"
+        elif cleaned_response in maybe_list:
+            return "MAYBE"
+        else:
+            raise NameError('Bad binary response')
+    try:
+        return_val = logic(cleaned_response)
+        return return_val
+    except NameError:
+        translated_response = translate(cleaned_response)
+        return logic(translated_response)
+
+
+def lambda_handler(event,context):
+  raw_response = event["raw_response"]
   
   metrics_calls = {
     1: get_number,
     2: get_binary,
     3: get_entities,
-    4: get_entities,
-    5: get_number,
-    6: get_dates
+    4: get_dates,
+    5: get_sentiment,
+    6: getImageTags
   }
   
   metric_response = []
   
-  for metric in input["question"]["metrics"]:
+  for metric in event["question"]["metrics"]:
     metric_id = metric["metric_id"]
-    result = metrics_calls[metric_id](answer)
-    if len(result) > 1:
+    print('metric_id: {}'.format(metric_id))
+    result = metrics_calls[metric_id](raw_response)
+    if result:
       result_value, result_confidence = result
     else:
       result_value, result_confidence = result, 0
     metric_response.append({'metric_id': metric_id, 'metric_type': metric["metric_type"], 'value': result_value, 'confidence': result_confidence})
   
-  final_result = input.copy()
+  final_result = event.copy()
   final_result["question"]["metrics"] = metric_response
   return final_result
 
