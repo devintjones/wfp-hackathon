@@ -2,33 +2,29 @@ import requests
 import datetime
 import re
 import json
-from text2num import text2num
-import nltk
+from text2num import text2num, NumberException
 
-def get_verbs(raw_string):
-    url = 'http://text-processing.com/api/tag/'
-    data = {'text': raw_string}
-    response = requests.post(url, data=data)
+
+def translate(s):
+    parameters = {
+        'key':'trnsl.1.1.20170108T012202Z.fa1a8d03eb8d33be.60cd4068fa2f37d75d11fad1906531974ce3ccdf',
+        'lang':'en',
+        'text': s
+    }
+    response = requests.post(
+        'https://translate.yandex.net/api/v1.5/tr.json/translate',
+        data=parameters)
     if response.status_code !=200:
         print("bad request. code: {} reason: {}".format(
             response.status_code, response.reason))
         raise Exception("text-processing.com error")
-    return ','.join([token.split('/')[0] for token in response.json().get('text').split(' ') 
-        if 'VB' in token.split('/')[-1]])
+    return response.json()['text'][0]
 
 
-def translate(s):
-	parameters = {
-		'key':'trnsl.1.1.20170108T012202Z.fa1a8d03eb8d33be.60cd4068fa2f37d75d11fad1906531974ce3ccdf',
-		'lang':'en',
-		'text': s
-	}
-	response = requests.post(
-            'https://translate.yandex.net/api/v1.5/tr.json/translate',
-            data=parameters)
-	return json.loads(r.text)['text']
+def send_watson_request(raw_string, try_num=1, max_retries=3):
+    if try_num >= max_retries:
+        raise Exception("cannot translate to english")
 
-def send_watson_request(raw_string):
     parameters = {
             'apikey':'c2370ab6d5c04452c495be090688ef5a3e0093d2',
             'outputMode':'json',
@@ -44,13 +40,13 @@ def send_watson_request(raw_string):
     if response.status_code != 200:
         raise Exception("IBM Watson API Error")
 
-	formatted_response = json.loads(r.text)
+    formatted_response = response.json()
 
-	if formatted_response['language'] != 'english':
-		translated_text = translate(raw_string)
-		get_watson_response(translated_text[0])
-	else:
-		return response.json
+    if formatted_response['language'] != 'english':
+        translated_text = translate(raw_string)
+        get_watson_response(translated_text[0],try_num+1)
+    else:
+        return response.json()
 
 
 def lambda_handler(event,context):
@@ -58,14 +54,27 @@ def lambda_handler(event,context):
   input = event 
   answer = input["raw_response"]
   
-  def get_number(response):
-    # num = text2num(response)
-    try:
+  def get_number(response, try_num=0, max_tries=3):
+      if try_num >= max_tries:
+          print('try_num: {}, exiting'.format(try_num))
+          raise Exception("couldn't parse number response")
+      
+      print('try_num: {}'.format(try_num))
+      print(response)
       num_list = re.findall('\d+', response)
-    except:
-      raise Exception
-    else:
-      return ",".join(num_list)
+      if num_list:
+          return ",".join(num_list)
+      
+      for token in response.split(' '):
+          try:
+              num_list = text2num(token)
+              print('text2num response: {}'.format(num_list))
+              return num_list
+          except NumberException:
+              print('number exception')
+      if not num_list:
+        get_number(translate(response), try_num+1)
+
         
   def get_entities(response):
     alchemy_result = send_watson_request(response) 
