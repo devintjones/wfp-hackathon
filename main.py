@@ -65,7 +65,9 @@ def get_number(response):
         translated_response = translate(response)
         print(translated_response)
         num_list = convert_string_to_num(translated_response)
-        raise Exception('error parsing number metric')
+        if not num_list:
+            raise Exception('error parsing number metric')
+        return num_list
   
 def get_sentiment(response):
     alchemy_result = send_watson_request(response) 
