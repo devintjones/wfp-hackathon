@@ -50,30 +50,35 @@ def send_watson_request(raw_string, try_num=1, max_retries=3):
 
 
 def lambda_handler(event,context):
-  
   input = event 
   answer = input["raw_response"]
   
-  def get_number(response, try_num=0, max_tries=3):
-      if try_num >= max_tries:
-          print('try_num: {}, exiting'.format(try_num))
-          raise Exception("couldn't parse number response")
-      
-      print('try_num: {}'.format(try_num))
-      print(response)
-      num_list = re.findall('\d+', response)
-      if num_list:
-          return ",".join(num_list)
-      
-      for token in response.split(' '):
+def get_number(response):
+    num_list = re.findall('\d+', response)
+    if num_list:
+        return ",".join(num_list)
+    
+    for token in response.split(' '):
+        try:
+          num_list = text2num(token)
+          print('text2num response: {}'.format(num_list))
+          return num_list
+        except NumberException:
+          print('number exception when converting text to num')
+    if not num_list:
+      try:
+        translated_response = translate(response)
+        for token in translated_response.split(' '):
           try:
-              num_list = text2num(token)
-              print('text2num response: {}'.format(num_list))
-              return num_list
+            num_list = text2num(token)
+            print('text2num response: {}'.format(num_list))
+            return num_list
           except NumberException:
-              print('number exception')
-      if not num_list:
-        get_number(translate(response), try_num+1)
+            print('number exception')
+        else:
+          raise Exception("couldn't parse number response after translation and text to num attempt")
+      except:
+        raise Exception("couldn't parse number response after translation and text to num attempt")
 
         
   def get_entities(response):
