@@ -80,14 +80,26 @@ def get_number(response):
       except:
         raise Exception("couldn't parse number response after translation and text to num attempt")
 
-        
+  def get_sentiment(response):
+    alchemy_result = send_watson_request(response) 
+    try:
+      result_confidence = alchemy_result["docSentiment"]["score"]
+    except KeyError:
+      result_confidence = 0
+    return [result_value,result_confidence]    
+
   def get_entities(response):
     alchemy_result = send_watson_request(response) 
-    return ",".join([keyword["text"] for keyword in alchemy_result["keywords"]])
-  
+    result_value = ",".join([keyword["text"] for keyword in alchemy_result["keywords"]])
+    result_confidence = ",".join([keyword["relevance"] for keyword in alchemy_result["keywords"]])
+    return [result_value, result_confidence]
+
   def get_dates(response):
     alchemy_result = send_watson_request(response) 
-    return ",".join([date["date"] for date in alchemy_result["dates"]])
+    result_value = ",".join([date["date"] for date in alchemy_result["dates"]])
+    result_confidence = ",".join([keyword["relevance"] for keyword in alchemy_result["keywords"]])
+    return [result_value, result_confidence]
+
     
   def get_binary(response):
     if "y" in response:
@@ -110,8 +122,14 @@ def get_number(response):
   
   for metric in input["question"]["metrics"]:
     metric_id = metric["metric_id"]
-    metric_response.append({'metric_id': metric_id, 'metric_type': metric["metric_type"], 'value': metrics_calls[metric_id](answer)})
+    result = metrics_calls[metric_id](answer)
+    if len(result) > 1:
+      result_value, result_confidence = result
+    else:
+      result_value, result_confidence = result, 0
+    metric_response.append({'metric_id': metric_id, 'metric_type': metric["metric_type"], 'value': result_value, 'confidence': result_confidence})
   
   final_result = input.copy()
   final_result["question"]["metrics"] = metric_response
   return final_result
+
