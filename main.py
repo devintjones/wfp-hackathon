@@ -5,6 +5,10 @@ import json
 from text2num import text2num, NumberException
 from computer_vision import getImageTags
 
+class ParserException(Exception):
+    def __init__(self, msg):
+        Exception.__init__(self, msg)
+
 def translate(s):
     parameters = {
         'key':'trnsl.1.1.20170108T012202Z.fa1a8d03eb8d33be.60cd4068fa2f37d75d11fad1906531974ce3ccdf',
@@ -15,20 +19,22 @@ def translate(s):
         'https://translate.yandex.net/api/v1.5/tr.json/translate',
         data=parameters)
     if response.status_code !=200:
-        print("bad request. code: {} reason: {}".format(
-            response.status_code, response.reason))
-        raise Exception("text-processing.com error")
+        msg = "bad request. code: {} reason: {}".format(
+            response.status_code, response.reason)
+        raise ParserException("text-processing.com error. msg: {}".format(
+            msg))
     return response.json()['text'][0]
 
 
 def send_watson_request(raw_string, try_num=1, max_retries=3):
     if try_num >= max_retries:
-        raise Exception("cannot translate to english")
+        raise ParserException("cannot translate to english. input: {}".format(
+            raw_string))
 
     parameters = {
             'apikey':'c2370ab6d5c04452c495be090688ef5a3e0093d2',
             'outputMode':'json',
-            'extract':'keywords,doc-sentiment,taxonomy,dates',
+            'extract':'keywords,doc-sentiment,taxonomy,dates,entity',
             'sentiment':'0',
             'maxRetrieve':'5',
             'text':raw_string
@@ -38,7 +44,10 @@ def send_watson_request(raw_string, try_num=1, max_retries=3):
             'https://gateway-a.watsonplatform.net/calls/text/TextGetCombinedData',
             data=parameters)
     if response.status_code != 200:
-        raise Exception("IBM Watson API Error")
+        msg = "bad request. code: {} reason: {}".format(
+            response.status_code, response.reason)
+        raise ParserException("IBM Watson Alchemy Error. msg: {}".format(
+            msg))
 
     formatted_response = response.json()
 
@@ -66,8 +75,9 @@ def get_number(response):
     translated_response = translate(response)
     num_list = convert_string_to_num(translated_response)
     if not num_list:
-        raise Exception('error parsing number metric')
-    return num_list
+        raise ParserException('error parsing number metric. input: {}'.format(
+            response))
+    return {'value': num_list, 'confidence': None}
 
 def get_sentiment(response):
     alchemy_result = send_watson_request(response) 
@@ -75,19 +85,31 @@ def get_sentiment(response):
         result_sentiment = alchemy_result["docSentiment"]["score"]
     except KeyError:
         result_sentiment = 0
-    return [result_sentiment, None]    
+    return {'value': result_sentiment, 'confidence': None}    
 
 def get_entities(response):
     alchemy_result = send_watson_request(response) 
+    if len(alchemy_result["keywords"])==0:
+        raise ParserException("cannot parse entities. input: {}".format(
+            response))
     result_value = ",".join([keyword["text"] for keyword in alchemy_result["keywords"]])
     result_confidence = ",".join([keyword["relevance"] for keyword in alchemy_result["keywords"]])
-    return [result_value, result_confidence]
+    return {'value': result_value, 'confidence': result_confidence}
 
 def get_dates(response):
     alchemy_result = send_watson_request(response) 
     result_value = ",".join([date["date"] for date in alchemy_result["dates"]])
     return [result_value, None]
 
+def get_geo(response):
+    alchemy_result = send_watson_request(response)
+    try:
+        location = alchemy_result['entities'][0]['text']
+        location_type = alchemy_result['entities'][0]['type']
+        return {'location': location, 'location_type': location_type}
+    except IndexError:
+        raise ParserException("cannot parse geo information. input: {}".format(
+            response))
 
 def get_binary(response):
     # FROM THESAURUS.COM
@@ -105,11 +127,11 @@ def get_binary(response):
         elif cleaned_response in maybe_list:
             return "MAYBE"
         else:
-            raise NameError('Bad binary response')
+            raise ParserException('Cannot parse yes/no/maybe')
     try:
         return_val = logic(cleaned_response)
-        return return_val
-    except NameError:
+        return {'value': return_val, 'confidence': None}
+    except ParserException:
         translated_response = translate(cleaned_response)
         return logic(translated_response)
 
@@ -118,28 +140,35 @@ def lambda_handler(event,context):
   raw_response = event["raw_response"]
   
   metrics_calls = {
-    1: get_number,
-    2: get_binary,
-    3: get_entities,
-    4: get_dates,
-    5: get_sentiment,
+    1: get_binary,
+    2: get_number,
+    3: get_sentiment,
+    4: get_entities,
+    # 4: get_dates, # unused
     # TODO test against image format provided by orchestrator
-    #6: getImageTags
+    5: getImageTags,
+    6: get_geo,
   }
   
   metric_response = []
-  
+  final_result = event.copy()
+
   for metric in event["question"]["metrics"]:
     metric_id = metric["metric_id"]
-    print('metric_id: {}'.format(metric_id))
+
     result = metrics_calls[metric_id](raw_response)
-    if result:
-      result_value, result_confidence = result
+    
+    # populate different fields for geo
+    if metric_id == 6:
+        final_result['respondent']['location'] = result['location']
+        final_result['respondent']['location_type'] = result['location_type']
+
     else:
-      result_value, result_confidence = result, 0
-    metric_response.append({'metric_id': metric_id, 'metric_type': metric["metric_type"], 'value': result_value, 'confidence': result_confidence})
-  
-  final_result = event.copy()
+        metric_response.append({'metric_id': metric_id, 
+            'metric_type': metric["metric_type"], 
+            'value': result.get('value'), 
+            'confidence': result.get('confidence')}) 
+
   final_result["question"]["metrics"] = metric_response
   return final_result
 
