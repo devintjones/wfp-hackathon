@@ -2,6 +2,19 @@ import requests
 import datetime
 import re
 from text2num import text2num
+import nltk
+
+def get_verbs(raw_string):
+    url = 'http://text-processing.com/api/tag/'
+    data = {'text': raw_string}
+    response = requests.post(url, data=data)
+    if response.status_code !=200:
+        print("bad request. code: {} reason: {}".format(
+            response.status_code, response.reason))
+        raise Exception("text-processing.com error")
+    return ','.join([token.split('/')[0] for token in response.json().get('text').split(' ') 
+        if 'VB' in token.split('/')[-1]])
+
 
 def send_watson_request(raw_string):
     parameters = {
