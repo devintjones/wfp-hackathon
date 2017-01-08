@@ -1,7 +1,19 @@
 import requests
 import datetime
 import re
+import json
 from text2num import text2num
+
+def translate(s):
+	parameters = {
+		'key':'trnsl.1.1.20170108T012202Z.fa1a8d03eb8d33be.60cd4068fa2f37d75d11fad1906531974ce3ccdf',
+		'lang':'en',
+		'text': s
+	}
+	response = requests.post(
+            'https://translate.yandex.net/api/v1.5/tr.json/translate',
+            data=parameters)
+	return json.loads(r.text)['text']
 
 def send_watson_request(raw_string):
     parameters = {
@@ -18,7 +30,14 @@ def send_watson_request(raw_string):
             data=parameters)
     if response.status_code != 200:
         raise Exception("IBM Watson API Error")
-    return response.json()
+
+	formatted_response = json.loads(r.text)
+
+	if formatted_response['language'] != 'english':
+		translated_text = translate(raw_string)
+		get_watson_response(translated_text[0])
+	else:
+		return response.json
 
 
 def lambda_handler(event,context):
