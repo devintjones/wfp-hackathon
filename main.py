@@ -61,14 +61,14 @@ def get_number(response):
             except NumberException:
               print('number exception when converting text to num')
     num_list = convert_string_to_num(response)
-    if not num_list:
-        translated_response = translate(response)
-        print(translated_response)
-        num_list = convert_string_to_num(translated_response)
-        if not num_list:
-            raise Exception('error parsing number metric')
+    if num_list:
         return num_list
-  
+    translated_response = translate(response)
+    num_list = convert_string_to_num(translated_response)
+    if not num_list:
+        raise Exception('error parsing number metric')
+    return num_list
+
 def get_sentiment(response):
     alchemy_result = send_watson_request(response) 
     try:
@@ -123,7 +123,8 @@ def lambda_handler(event,context):
     3: get_entities,
     4: get_dates,
     5: get_sentiment,
-    6: getImageTags
+    # TODO test against image format provided by orchestrator
+    #6: getImageTags
   }
   
   metric_response = []
